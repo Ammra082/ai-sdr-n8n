@@ -329,7 +329,7 @@ Low-scoring leads are written to a separate sheet tab with the AI's reasoning, a
 
 ## Author
 
-**Ammara Tariq** — AI Engineering Graduate, KFUEIT 2026
+**Ammara Tariq** 
 
 [LinkedIn](https://linkedin.com/in/ammara) · [GitHub](https://github.com/ammara) · ammaratariq443@gmail.com
 
