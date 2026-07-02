@@ -1,0 +1,24 @@
+# ============================================================
+# AI SDR Project — .gitignore
+# ============================================================
+
+# --- Environment & Secrets ---
+.env
+.env.*
+*.env
+secrets.json
+credentials.json
+
+# --- OS & Editor ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/settings.json
+
+# --- Node / npm (if you ever add scripts) ---
+node_modules/
+npm-debug.log*
+
+# --- Logs ---
+*.log
+logs/

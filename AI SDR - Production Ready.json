@@ -1,0 +1,959 @@
+﻿{
+  "name": "AI SDR - Production Ready",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-sdr",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -4384,
+        -112
+      ],
+      "id": "5c6b538e-ed17-45ca-a2c6-deedbb3af490",
+      "name": "Tally Form Webhook",
+      "webhookId": "832463f4-b5fb-4468-8172-efd62ec3e858"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nconst fields = body.data.fields;\n\nconst getValue = (label) => {\n  const field = fields.find(f => f.label === label);\n  return field ? field.value : '';\n};\n\nconst industry = getValue('Industry');\nconst location = getValue('Location');\nconst jobTitle = getValue('Job title to target');\nconst numLeads = parseInt(getValue('Number of leads')) || 5;\nconst yourService = getValue('Your service or product');\n\nconst searchQuery = `site:linkedin.com/in \"${jobTitle}\" \"${industry}\" \"${location}\"`;\n\nreturn [{\n  json: {\n    industry,\n    location,\n    jobTitle,\n    numLeads,\n    yourService,\n    searchQuery,\n    serperBody: JSON.stringify({ q: searchQuery, num: Math.min(numLeads, 10) })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4160,
+        -112
+      ],
+      "id": "d32752a9-62ea-47ac-8cde-0288bc3a37b5",
+      "name": "Parse Form Data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-KEY",
+              "value": "YOUR_SERPER_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.serperBody }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -3920,
+        -112
+      ],
+      "id": "1f399a0f-5466-4fc0-804a-8de858ed9acf",
+      "name": "Find LinkedIn Profiles"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json;\nconst organic = results.organic || [];\nconst formData = $('Parse Form Data').first().json;\nconst numLeads = formData.numLeads || 5;\n\nreturn organic.slice(0, numLeads).map((result, index) => {\n  const titleParts = result.title.split(' - ');\n  const fullName = titleParts[0].trim();\n  const nameParts = fullName.split(' ');\n  const firstName = nameParts[0] || '';\n  const lastName = nameParts.slice(1).join(' ') || '';\n\n  return {\n    json: {\n      leadId: `lead_${Date.now()}_${index}`,\n      fullName,\n      firstName,\n      lastName,\n      linkedinUrl: result.link,\n      linkedinSnippet: result.snippet || '',\n      industry: formData.industry,\n      location: formData.location,\n      jobTitle: formData.jobTitle,\n      yourService: formData.yourService || '',\n      domain: '',\n      email: '',\n      outreachMethod: 'linkedin',\n      research: '',\n      score: 0,\n      hooks: '',\n      reasoning: '',\n      message_subject: '',\n      message_body: '',\n      status: 'processing',\n      errors: []\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3664,
+        -112
+      ],
+      "id": "50156be1-cc95-47f0-998e-fb2f31d48a8a",
+      "name": "Extract Leads"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [
+        -3440,
+        -112
+      ],
+      "typeVersion": 3,
+      "id": "978fa1b4-d927-4a65-896a-fc9a6d49939a",
+      "name": "Process One at a Time"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.first().json;\n\n// Guard against empty batch trigger at end of loop\nif (!lead || !lead.fullName) {\n  return [];\n}\n\nconst searchQuery = lead.fullName + ' ' + ((lead.linkedinSnippet || '').split('.')[0] || '') + ' company website email';\n\nreturn [{\n  json: {\n    ...lead,\n    domainSearchBody: JSON.stringify({ q: searchQuery, num: 3 })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3200,
+        -112
+      ],
+      "id": "ed1b7e8e-8883-443b-abb4-5bc09bbc79f8",
+      "name": "Build Domain Search"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-KEY",
+              "value": "YOUR_SERPER_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.domainSearchBody }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -4384,
+        208
+      ],
+      "id": "aef366ac-6817-45e4-aeb8-a36a86187564",
+      "name": "Find Company Domain"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract domain from search results â€” carry full lead object forward\nconst item = $input.first().json;\nconst lead = item._lead || item;\nconst organic = item.organic || [];\n\n// We lost the lead data because HTTP Request replaced it\n// Read lead from previous code node instead\nconst prevLead = $('Build Domain Search').first().json;\n\nlet domain = '';\n\nconst skipDomains = ['linkedin', 'rocketreach', 'google', 'facebook', 'twitter',\n  'instagram', 'youtube', 'wikipedia', 'gmail.com', 'yahoo.com',\n  'outlook.com', 'hotmail.com', 'medium.com', 'crunchbase.com',\n  'zoominfo.com', 'bloomberg.com', 'reuters.com', 'apple.com',\n  'microsoft.com', 'amazon.com'];\n\nfor (const result of organic) {\n  const snippet = result.snippet || '';\n  const link = result.link || '';\n\n  const emailMatch = snippet.match(/[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);\n  if (emailMatch && !skipDomains.some(s => emailMatch[1].includes(s))) {\n    domain = emailMatch[1];\n    break;\n  }\n\n  const shouldSkip = skipDomains.some(s => link.includes(s));\n  if (!shouldSkip && !domain) {\n    const domainMatch = link.match(/https?:\\/\\/(?:www\\.)?([a-zA-Z0-9-]+\\.[a-zA-Z]{2,})/);\n    if (domainMatch) domain = domainMatch[1];\n  }\n}\n\nconst validDomain = domain && domain.includes('.') && domain.length > 4\n  && !domain.includes(' ') && !domain.includes('/');\nconst cleanDomain = validDomain ? domain : '';\n\nreturn [{\n  json: {\n    ...prevLead,\n    domain: cleanDomain,\n    domainSearchBody: undefined\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4128,
+        208
+      ],
+      "id": "d978b5e2-4ea5-4184-82c7-3b6c3073337f",
+      "name": "Extract Domain"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.first().json;\n\n// Search Google for publicly listed email for this person\nconst emailSearchBody = JSON.stringify({\n  q: '\"' + lead.firstName + ' ' + lead.lastName + '\" \"' + (lead.domain || lead.fullName) + '\" email contact',\n  num: 5\n});\n\nreturn [{\n  json: {\n    ...lead,\n    emailSearchBody\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3888,
+        208
+      ],
+      "id": "c2c0ccee-a8e1-4bab-b043-0c980462f462",
+      "name": "Build Email Search"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "has-domain",
+              "leftValue": "={{ !!$json.domain }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3664,
+        208
+      ],
+      "id": "1283f2d4-e7c6-4ec0-a7a2-d22be2df3705",
+      "name": "Has Domain?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-KEY",
+              "value": "YOUR_SERPER_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.emailSearchBody }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -3392,
+        144
+      ],
+      "id": "a571fe50-b4be-4ff8-8cdc-6446834905fe",
+      "name": "Find Email via Serper"
+    },
+    {
+      "parameters": {
+        "jsCode": "const serperResult = $input.first().json;\nconst lead = $('Build Email Search').first().json;\n\nconst organic = serperResult.organic || [];\nlet email = '';\n\n// Patterns to extract email from search snippets and links\nconst emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g;\n\n// Skip generic/irrelevant email domains\nconst skipEmailDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com'];\n\nfor (const result of organic) {\n  const text = (result.snippet || '') + ' ' + (result.link || '');\n  const matches = text.match(emailRegex) || [];\n  \n  for (const match of matches) {\n    const domain = match.split('@')[1];\n    if (!skipEmailDomains.includes(domain)) {\n      email = match;\n      break;\n    }\n  }\n  \n  if (email) break;\n}\n\nreturn [{\n  json: {\n    ...lead,\n    email,\n    outreachMethod: email ? 'email' : 'linkedin',\n    emailSearchBody: undefined\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3136,
+        96
+      ],
+      "id": "d05a9038-cace-4bb1-b8c4-0721e02e8018",
+      "name": "Merge Email Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.first().json;\n\nreturn [{\n  json: {\n    ...lead,\n    email: '',\n    outreachMethod: 'linkedin',\n    emailSearchBody: undefined,\n    skipHunter: undefined\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3408,
+        352
+      ],
+      "id": "27669ada-70d0-46d6-8314-8c7712fa2edd",
+      "name": "No Domain Path"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build research query â€” carry full lead object forward\nconst lead = $input.first().json;\n\nconst q = (lead.domain || lead.fullName) + ' company overview news funding';\n\nreturn [{\n  json: {\n    ...lead,\n    researchBody: JSON.stringify({ q, num: 5 })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3104,
+        320
+      ],
+      "id": "5a640894-6b35-4330-97d0-e00b02f759ef",
+      "name": "Build Research Query"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-KEY",
+              "value": "YOUR_SERPER_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.researchBody }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -4400,
+        560
+      ],
+      "id": "e5bec34e-b900-4108-9272-6624cdae62de",
+      "name": "Research Company"
+    },
+    {
+      "parameters": {
+        "jsCode": "const researchResult = $input.first().json;\nconst organic = researchResult.organic || [];\n\nconst research = organic.length > 0\n  ? organic.slice(0, 5).map(r => r.title + ': ' + r.snippet).join(' | ')\n  : 'No research available';\n\n// Lead data was carried into Research Company via Build Research Query\n// Read it back from that node since HTTP Request replaced $input\nconst lead = $('Build Research Query').first().json;\n\nconst prompt = `You are a B2B sales AI writing outreach on behalf of a salesperson.\n\nSENDER'S SERVICE: ${lead.yourService || 'consulting services'}\n\nLEAD: ${lead.fullName} at ${lead.domain || 'unknown company'}\nOUTREACH METHOD: ${lead.outreachMethod}\nRESEARCH: ${research}\n\nWrite a highly personalized outreach message. Respond ONLY with valid JSON, no extra text:\n{\n  \"score\": <integer 1-10>,\n  \"hooks\": [\"specific fact 1\", \"specific fact 2\"],\n  \"reasoning\": \"one sentence explaining score\",\n  \"subject\": \"email subject (empty string if linkedin)\",\n  \"body\": \"message body\"\n}\n\nRULES FOR BODY:\n- Start with \"Hi ${lead.firstName},\"\n- First sentence: reference ONE specific fact from research\n- Second sentence: connect that fact to a problem your service solves\n- Third sentence: mention the sender's service naturally\n- End with ONE specific question\n- Max 5 sentences for email, max 3 for LinkedIn\n- Never say \"our solutions\", \"stay ahead of the curve\", \"drive growth\"\n- Write as a peer, not a salesperson\n\nSCORING: 8-10=tech company with budget signals; 5-7=unclear fit; 1-4=local business`;\n\nreturn [{\n  json: {\n    ...lead,\n    research,\n    groqBody: JSON.stringify({\n      model: 'llama-3.1-8b-instant',\n      max_tokens: 600,\n      temperature: 0.3,\n      messages: [{ role: 'user', content: prompt }]\n    }),\n    researchBody: undefined\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4192,
+        560
+      ],
+      "id": "54ce983d-c000-4c9a-b144-3eea605bee42",
+      "name": "Build Groq Prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_GROQ_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.groqBody }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -3968,
+        560
+      ],
+      "id": "66586aed-d82d-46e1-8d1f-e562a5df42cc",
+      "name": "Score and Draft (Groq)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Groq response â€” carry full lead object forward\nconst groqResult = $input.first().json;\nconst lead = $('Build Groq Prompt').first().json;\n\nlet parsed;\ntry {\n  const raw = groqResult.choices[0].message.content;\n  const match = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match[0]);\n} catch(e) {\n  parsed = {\n    score: 5,\n    hooks: [],\n    reasoning: 'LLM parse failed',\n    subject: 'Following up',\n    body: `Hi ${lead.firstName}, I came across your profile and would love to connect. Are you open to a quick chat?`\n  };\n}\n\nreturn [{\n  json: {\n    ...lead,\n    score: parsed.score || 5,\n    hooks: Array.isArray(parsed.hooks) ? parsed.hooks.join(' | ') : (parsed.hooks || ''),\n    reasoning: parsed.reasoning || '',\n    message_subject: parsed.subject || '',\n    message_body: parsed.body || '',\n    groqBody: undefined\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3696,
+        560
+      ],
+      "id": "96b8ce88-2541-4eb5-8746-e8cf511300c0",
+      "name": "Parse Groq Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "score-check",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 7,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3488,
+        560
+      ],
+      "id": "8f754583-8521-485a-a02f-98ae08014da1",
+      "name": "Score >= 7?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "method-check",
+              "leftValue": "={{ $json.outreachMethod }}",
+              "rightValue": "email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3264,
+        560
+      ],
+      "id": "72a7f53c-ac18-4a31-aa2c-4ddebd6fbca1",
+      "name": "Email or LinkedIn?"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.message_subject }}",
+        "emailType": "text",
+        "message": "={{ $json.message_body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -2992,
+        544
+      ],
+      "id": "a33156d8-adf0-4136-8dce-d6ed3bd2dba4",
+      "name": "Send Email",
+      "webhookId": "96d3687e-987f-44e5-8d85-98d9dd461ba9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GiOtHxqtz1DfjAuz",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1aMc9zYbtyHOxxAHKBQOpJ-NGfj-6mot4G9BtMSng7pc",
+          "mode": "list",
+          "cachedResultName": "Lead Agent",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1aMc9zYbtyHOxxAHKBQOpJ-NGfj-6mot4G9BtMSng7pc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Leads",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1aMc9zYbtyHOxxAHKBQOpJ-NGfj-6mot4G9BtMSng7pc/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "A1: name": "={{ $json.fullName }}",
+            "C1: website": "={{ $json.linkedinUrl }}",
+            "B1: company": "={{ $json.domain }}",
+            "D1: email": "={{ $json.email }}",
+            "E1: status": "={{ $json.outreachMethod }}",
+            "F1: score": "={{ $json.score }}",
+            "G1: hooks_found": "={{ $json.hooks }}",
+            "H1: processed_at": "={{ new Date().toISOString() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "A1: name",
+              "displayName": "A1: name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "B1: company",
+              "displayName": "B1: company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "C1: website",
+              "displayName": "C1: website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "D1: email",
+              "displayName": "D1: email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "E1: status",
+              "displayName": "E1: status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "F1: score",
+              "displayName": "F1: score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "G1: hooks_found",
+              "displayName": "G1: hooks_found",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "H1: processed_at",
+              "displayName": "H1: processed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -2976,
+        720
+      ],
+      "id": "c66c8cb8-9fb0-45a2-9b1b-8f26643d0445",
+      "name": "Log to Leads Sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "1OPxCetbavWcGHt2",
+          "name": "Google Sheets account 6"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1aMc9zYbtyHOxxAHKBQOpJ-NGfj-6mot4G9BtMSng7pc",
+          "mode": "list",
+          "cachedResultName": "Lead Agent",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1aMc9zYbtyHOxxAHKBQOpJ-NGfj-6mot4G9BtMSng7pc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1304956444,
+          "mode": "list",
+          "cachedResultName": "Review Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1aMc9zYbtyHOxxAHKBQOpJ-NGfj-6mot4G9BtMSng7pc/edit#gid=1304956444"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "A1: name",
+              "displayName": "A1: name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "B1: company",
+              "displayName": "B1: company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "C1: email",
+              "displayName": "C1: email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "D1: score",
+              "displayName": "D1: score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "E1: hooks",
+              "displayName": "E1: hooks",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "F1: reasoning",
+              "displayName": "F1: reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "G1: added_at",
+              "displayName": "G1: added_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -3280,
+        976
+      ],
+      "id": "8156f51b-739c-46fb-b139-2ec465d48f37",
+      "name": "Append to Review Queue",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "mDk9NAYqJMlVGpuM",
+          "name": "Google Sheets account 7"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Tally Form Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Form Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Form Data": {
+      "main": [
+        [
+          {
+            "node": "Find LinkedIn Profiles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find LinkedIn Profiles": {
+      "main": [
+        [
+          {
+            "node": "Extract Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Leads": {
+      "main": [
+        [
+          {
+            "node": "Process One at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process One at a Time": {
+      "main": [
+        [
+          {
+            "node": "Build Domain Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Domain Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Domain Search": {
+      "main": [
+        [
+          {
+            "node": "Find Company Domain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Company Domain": {
+      "main": [
+        [
+          {
+            "node": "Extract Domain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Domain": {
+      "main": [
+        [
+          {
+            "node": "Build Email Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Search": {
+      "main": [
+        [
+          {
+            "node": "Has Domain?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Domain?": {
+      "main": [
+        [
+          {
+            "node": "Find Email via Serper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Domain Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Email via Serper": {
+      "main": [
+        [
+          {
+            "node": "Merge Email Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Email Result": {
+      "main": [
+        [
+          {
+            "node": "Build Research Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Domain Path": {
+      "main": [
+        [
+          {
+            "node": "Build Research Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Research Query": {
+      "main": [
+        [
+          {
+            "node": "Research Company",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research Company": {
+      "main": [
+        [
+          {
+            "node": "Build Groq Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Groq Prompt": {
+      "main": [
+        [
+          {
+            "node": "Score and Draft (Groq)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score and Draft (Groq)": {
+      "main": [
+        [
+          {
+            "node": "Parse Groq Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Groq Response": {
+      "main": [
+        [
+          {
+            "node": "Score >= 7?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score >= 7?": {
+      "main": [
+        [
+          {
+            "node": "Email or LinkedIn?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append to Review Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email or LinkedIn?": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log to Leads Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log to Leads Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Leads Sheet": {
+      "main": [
+        [
+          {
+            "node": "Process One at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Review Queue": {
+      "main": [
+        [
+          {
+            "node": "Process One at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "a066a10f-2be8-43ce-8926-7872704c78a4",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "364cddd12dd947a3f03f9edb147eef09772387dcaa23715cd6afddbffde00bb5"
+  },
+  "nodeGroups": [],
+  "id": "a4W74Tr58YJJlt3s",
+  "tags": []
+}
+
+
